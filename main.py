@@ -1,5 +1,3 @@
-cd ~/Documents/Hackathon
-cat > main.py << 'ENDOFFILE'
 """
 Eco-Logistics — FastAPI OpenEnv Server
 
@@ -40,8 +38,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Global environment instance (single-session for simplicity; extend with session IDs for multi-user)
 env = EcoLogisticsEnv()
 
+
+# ── Request / Response Models ────────────────────────────────────────────────
 
 class ResetRequest(BaseModel):
     task_id: str = "restock_only"
@@ -84,6 +85,8 @@ class BaselineResponse(BaseModel):
     steps: list[BaselineStepLog]
 
 
+# ── Endpoints ────────────────────────────────────────────────────────────────
+
 @app.get("/")
 def root():
     return {
@@ -95,6 +98,7 @@ def root():
 
 @app.post("/reset", response_model=Observation)
 def reset(req: Optional[ResetRequest] = None):
+    """Reset the environment to a specific task."""
     if req is None:
         req = ResetRequest()
     try:
@@ -106,6 +110,7 @@ def reset(req: Optional[ResetRequest] = None):
 
 @app.post("/step", response_model=StepResponse)
 def step(req: Optional[StepRequest] = None):
+    """Execute one step in the environment."""
     if req is None:
         req = StepRequest()
     try:
@@ -128,16 +133,19 @@ def step(req: Optional[StepRequest] = None):
 
 @app.get("/state")
 def state():
+    """Return full environment state snapshot."""
     return env.state()
 
 
 @app.get("/tasks")
 def tasks():
+    """List all available tasks."""
     return {tid: t.model_dump() for tid, t in TASKS.items()}
 
 
 @app.post("/grader", response_model=GraderResult)
 def grader(req: Optional[GradeRequest] = None):
+    """Grade the current episode."""
     if req is None:
         req = GradeRequest()
     try:
@@ -148,6 +156,7 @@ def grader(req: Optional[GradeRequest] = None):
 
 @app.post("/baseline", response_model=BaselineResponse)
 def baseline(req: BaselineRequest):
+    """Run a deterministic heuristic baseline and return results."""
     from baseline import run_heuristic_baseline
     result = run_heuristic_baseline(task_id=req.task_id, seed=req.seed)
     return result
@@ -158,8 +167,9 @@ def health():
     return {"status": "healthy"}
 
 
+# ── Startup ──────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
-ENDOFFILE
