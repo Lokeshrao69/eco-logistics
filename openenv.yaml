@@ -1,0 +1,102 @@
+name: eco-logistics
+display_name: "Eco-Logistics: Multi-City Supply Chain Optimizer"
+version: "1.0.0"
+description: >
+  An RL environment where an agent manages inventory across 3 warehouses
+  (Seattle, Chicago, NYC) to meet fluctuating demand while minimizing
+  carbon footprint and shipping costs. Features inventory decay, variable
+  lead times, carbon tax penalties, and weather disruption events.
+
+author: "Hackathon Team"
+license: "MIT"
+
+env:
+  entrypoint: "main:app"
+  framework: "fastapi"
+  port: 7860
+
+observation:
+  type: "TypedDict"
+  fields:
+    current_inventory:
+      type: "Dict[str, float]"
+      description: "Units at each warehouse: Seattle, Chicago, NYC"
+    pending_shipments:
+      type: "List[PendingShipment]"
+      description: "In-transit shipments with remaining lead time"
+    current_demand:
+      type: "Dict[str, float]"
+      description: "Customer demand at each city this step"
+    carbon_credit_balance:
+      type: "float"
+      description: "Remaining carbon budget (negative = over limit)"
+    step_number:
+      type: "int"
+      description: "Current simulation step"
+    total_steps:
+      type: "int"
+      description: "Total steps in episode"
+    weather_alert:
+      type: "Optional[str]"
+      description: "Active weather disruption warning"
+    cumulative_profit:
+      type: "float"
+      description: "Running profit total"
+    cumulative_carbon:
+      type: "float"
+      description: "Running carbon emissions total"
+
+action:
+  type: "TypedDict"
+  fields:
+    ship_amount:
+      type: "float"
+      description: "Units to ship (0 = no-op)"
+      range: [0, "inf"]
+    origin_city:
+      type: "str"
+      description: "Source warehouse"
+      enum: ["Seattle", "Chicago", "NYC"]
+    destination_city:
+      type: "str"
+      description: "Target warehouse"
+      enum: ["Seattle", "Chicago", "NYC"]
+    speed_mode:
+      type: "str"
+      description: "Shipping mode"
+      enum: ["Air", "Rail"]
+
+reward:
+  formula: "Sales_Revenue - Shipping_Cost - Carbon_Penalty - Storage_Fee + Healthy_Stock_Bonus"
+  range: ["-inf", "inf"]
+
+tasks:
+  - id: restock_only
+    name: "Restock Only"
+    difficulty: easy
+    steps: 10
+    description: "Maintain stock above 20 units at every warehouse."
+    grader: "Fraction of city-step checks above 20 units."
+
+  - id: inventory_balanced
+    name: "Inventory Balanced"
+    difficulty: medium
+    steps: 15
+    description: "Keep stock levels within 10% of each other across cities."
+    grader: "Fraction of steps where max deviation < 10%."
+
+  - id: net_zero_profit
+    name: "Net-Zero Profit"
+    difficulty: hard
+    steps: 20
+    description: "Maximize profit while staying under carbon budget (80 units)."
+    grader: "Normalized profit score, penalized for carbon overshoot."
+
+endpoints:
+  reset: POST /reset
+  step: POST /step
+  state: GET /state
+  tasks: GET /tasks
+  grader: POST /grader
+  baseline: POST /baseline
+  health: GET /health
