@@ -1,0 +1,23 @@
+[project]
+name = "eco-logistics"
+version = "1.0.0"
+description = "Eco-Logistics: Multi-City Supply Chain Optimizer"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "pydantic==2.10.3",
+    "openai>=2.7.2",
+    "requests==2.32.3",
+    "httpx>=0.28.1",
+    "openenv-core>=0.2.0",
+]
+
+[project.scripts]
+server = "server.app:main"
+start = "server.app:main"
+
+[tool.openenv]
+name = "eco-logistics"
+entrypoint = "main:app"
+port = 7860
