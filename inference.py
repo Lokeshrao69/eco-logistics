@@ -9,7 +9,7 @@ MANDATORY environment variables:
 
 Usage:
     export API_BASE_URL="https://router.huggingface.co/v1"
-    export MODEL_NAME="gpt-4o"
+    export MODEL_NAME="meta-llama/Llama-3.3-70B-Instruct"
     export HF_TOKEN="hf_..."
     python inference.py
 
@@ -22,6 +22,7 @@ import re
 import sys
 import textwrap
 import time
+from typing import List, Optional
 
 from openai import OpenAI
 
@@ -34,7 +35,7 @@ from models import TASKS, Action, SpeedMode
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-MODEL_NAME = os.getenv("MODEL_NAME")
+MODEL_NAME = os.getenv("MODEL_NAME") or "meta-llama/Llama-3.3-70B-Instruct"
 
 # Inference parameters
 SEED = 42
@@ -42,6 +43,8 @@ TEMPERATURE = 0.0
 MAX_TOKENS = 300
 MAX_HISTORY = 20          # max conversation messages before truncation
 DEBUG = True
+
+BENCHMARK = "eco_logistics"
 
 # Fallback when LLM fails to produce valid JSON
 FALLBACK_ACTION = {
@@ -60,6 +63,28 @@ VALID_MODES = ["Air", "Rail"]
 
 # Regex to extract JSON from LLM response
 JSON_PATTERN = re.compile(r"\{[^{}]*\}", re.DOTALL)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Structured logging — required by hackathon evaluation
+# ═══════════════════════════════════════════════════════════════════════════
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -122,14 +147,14 @@ def parse_action(raw_text: str) -> dict:
     match = JSON_PATTERN.search(text)
     if not match:
         if DEBUG:
-            print(f"    [PARSE] No JSON found in: {text[:80]}...")
+            print(f"    [PARSE] No JSON found in: {text[:80]}...", flush=True)
         return FALLBACK_ACTION.copy()
 
     try:
         data = json.loads(match.group())
     except json.JSONDecodeError:
         if DEBUG:
-            print(f"    [PARSE] Invalid JSON: {match.group()[:80]}...")
+            print(f"    [PARSE] Invalid JSON: {match.group()[:80]}...", flush=True)
         return FALLBACK_ACTION.copy()
 
     # Sanitize fields
@@ -182,6 +207,17 @@ def format_observation(obs_dict: dict) -> str:
     )
 
 
+def action_to_str(action_dict: dict) -> str:
+    """Format action dict as a compact single-line string for [STEP] logging."""
+    if action_dict["ship_amount"] == 0:
+        return "no-op"
+    return (
+        f"ship({action_dict['ship_amount']:.0f},"
+        f"{action_dict['origin_city']}->{action_dict['destination_city']},"
+        f"{action_dict['speed_mode']})"
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Run a single task episode
 # ═══════════════════════════════════════════════════════════════════════════
@@ -193,19 +229,24 @@ def run_episode(client: OpenAI, task_id: str) -> dict:
     """
     task_def = TASKS[task_id]
 
-    print(f"\n{'='*60}")
-    print(f"TASK: {task_id} ({task_def.difficulty.value})")
-    print(f"  {task_def.description}")
-    print(f"{'='*60}")
+    if DEBUG:
+        print(f"\n{'='*60}", flush=True)
+        print(f"TASK: {task_id} ({task_def.difficulty.value})", flush=True)
+        print(f"  {task_def.description}", flush=True)
+        print(f"{'='*60}", flush=True)
 
     # Initialize environment directly (not over HTTP)
     env = EcoLogisticsEnv(seed=SEED)
     obs = env.reset(task_id=task_id, seed=SEED)
 
     obs_dict = obs.model_dump()
-    print(f"  Initial inventory: {obs_dict['current_inventory']}")
-    print(f"  Carbon budget:     {obs_dict['carbon_credit_balance']}")
-    print(f"  Total steps:       {obs_dict['total_steps']}")
+    if DEBUG:
+        print(f"  Initial inventory: {obs_dict['current_inventory']}", flush=True)
+        print(f"  Carbon budget:     {obs_dict['carbon_credit_balance']}", flush=True)
+        print(f"  Total steps:       {obs_dict['total_steps']}", flush=True)
+
+    # Emit [START] for this task
+    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
     # Build system prompt with task-specific description
     system_prompt = SYSTEM_PROMPT.format(task_description=task_def.description)
@@ -214,6 +255,8 @@ def run_episode(client: OpenAI, task_id: str) -> dict:
     done = False
     step_num = 0
     total_reward = 0.0
+    rewards: List[float] = []
+    last_error: Optional[str] = None
 
     while not done:
         # Build user message from current observation
@@ -222,6 +265,7 @@ def run_episode(client: OpenAI, task_id: str) -> dict:
         messages.append({"role": "user", "content": user_msg})
 
         # Call LLM via OpenAI client
+        last_error = None
         try:
             response = client.chat.completions.create(
                 model=MODEL_NAME,
@@ -232,7 +276,9 @@ def run_episode(client: OpenAI, task_id: str) -> dict:
             raw = response.choices[0].message.content or ""
             action_dict = parse_action(raw)
         except Exception as e:
-            print(f"  [Step {step_num}] LLM error: {e}. Using fallback.")
+            last_error = str(e)
+            if DEBUG:
+                print(f"  [Step {step_num}] LLM error: {e}. Using fallback.", flush=True)
             action_dict = FALLBACK_ACTION.copy()
 
         messages.append({"role": "assistant", "content": json.dumps(action_dict)})
@@ -246,22 +292,22 @@ def run_episode(client: OpenAI, task_id: str) -> dict:
         )
 
         obs, reward, done, info = env.step(action)
-        total_reward += reward.total
+        step_reward = reward.total
+        total_reward += step_reward
+        rewards.append(step_reward)
 
-        # Log
+        # Emit [STEP] log line
+        action_str = action_to_str(action_dict)
+        log_step(step=step_num + 1, action=action_str, reward=step_reward, done=done, error=last_error)
+
+        # Debug inventory line
         if DEBUG:
-            ship_info = (
-                f"{action_dict['ship_amount']:.0f}u "
-                f"{action_dict['origin_city']}->{action_dict['destination_city']} "
-                f"({action_dict['speed_mode']})"
-                if action_dict["ship_amount"] > 0
-                else "no-op"
-            )
             inv = obs.current_inventory
             print(
-                f"  Step {step_num:2d}: {ship_info:40s} | "
-                f"reward={reward.total:+7.2f} | "
-                f"inv=[{inv['Seattle']:.0f}, {inv['Chicago']:.0f}, {inv['NYC']:.0f}]"
+                f"  Step {step_num:2d}: {action_str:40s} | "
+                f"reward={step_reward:+7.2f} | "
+                f"inv=[{inv['Seattle']:.0f}, {inv['Chicago']:.0f}, {inv['NYC']:.0f}]",
+                flush=True,
             )
 
         step_num += 1
@@ -272,14 +318,20 @@ def run_episode(client: OpenAI, task_id: str) -> dict:
 
     # Grade the episode
     grade = env.grade()
+    score = grade.score
+    success = score > 0.0
 
-    print(f"\n  RESULT: score={grade.score:.4f}")
-    print(f"  Feedback: {grade.feedback}")
-    print(f"  Total reward: {total_reward:.2f}")
+    # Emit [END] log line
+    log_end(success=success, steps=step_num, score=score, rewards=rewards)
+
+    if DEBUG:
+        print(f"\n  RESULT: score={score:.4f}", flush=True)
+        print(f"  Feedback: {grade.feedback}", flush=True)
+        print(f"  Total reward: {total_reward:.2f}", flush=True)
 
     return {
         "task_id": task_id,
-        "score": grade.score,
+        "score": score,
         "feedback": grade.feedback,
         "metrics": grade.metrics,
         "total_reward": round(total_reward, 2),
@@ -291,9 +343,9 @@ def run_episode(client: OpenAI, task_id: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def main():
-    print("=" * 60)
-    print("Eco-Logistics — LLM Inference Script")
-    print("=" * 60)
+    print("=" * 60, flush=True)
+    print("Eco-Logistics — LLM Inference Script", flush=True)
+    print("=" * 60, flush=True)
 
     # Validate required env vars
     if not API_KEY:
@@ -303,12 +355,12 @@ def main():
 
     if not MODEL_NAME:
         print("ERROR: MODEL_NAME environment variable is not set.")
-        print("  export MODEL_NAME='gpt-4o'")
+        print("  export MODEL_NAME='meta-llama/Llama-3.3-70B-Instruct'")
         sys.exit(1)
 
-    print(f"  API_BASE_URL : {API_BASE_URL}")
-    print(f"  MODEL_NAME   : {MODEL_NAME}")
-    print(f"  HF_TOKEN     : {'***' + API_KEY[-4:] if len(API_KEY) > 4 else '(set)'}")
+    print(f"  API_BASE_URL : {API_BASE_URL}", flush=True)
+    print(f"  MODEL_NAME   : {MODEL_NAME}", flush=True)
+    print(f"  HF_TOKEN     : {'***' + API_KEY[-4:] if len(API_KEY) > 4 else '(set)'}", flush=True)
 
     # Initialize OpenAI client
     client = OpenAI(
@@ -327,22 +379,23 @@ def main():
     elapsed = time.time() - start_time
 
     # ── Summary ──────────────────────────────────────────────────────────
-    print(f"\n{'='*60}")
-    print("SUMMARY")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}", flush=True)
+    print("SUMMARY", flush=True)
+    print(f"{'='*60}", flush=True)
     for r in results:
         status = "PASS" if r["score"] > 0 else "FAIL"
         print(
             f"  [{status}] {r['task_id']:25s}  "
             f"score={r['score']:.4f}  "
-            f"reward={r['total_reward']:+.2f}"
+            f"reward={r['total_reward']:+.2f}",
+            flush=True,
         )
 
     avg_score = sum(r["score"] for r in results) / len(results) if results else 0
-    print(f"\n  Average score : {avg_score:.4f}")
-    print(f"  Total time    : {elapsed:.1f}s")
-    print(f"  All in [0,1]  : {all(0.0 <= r['score'] <= 1.0 for r in results)}")
-    print(f"{'='*60}")
+    print(f"\n  Average score : {avg_score:.4f}", flush=True)
+    print(f"  Total time    : {elapsed:.1f}s", flush=True)
+    print(f"  All in [0,1]  : {all(0.0 <= r['score'] <= 1.0 for r in results)}", flush=True)
+    print(f"{'='*60}", flush=True)
 
 
 if __name__ == "__main__":

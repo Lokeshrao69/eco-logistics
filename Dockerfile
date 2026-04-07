@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # App code
 COPY models.py env.py main.py baseline.py inference.py openenv.yaml ./
+COPY pyproject.toml uv.lock ./
 COPY README.md ./
+COPY server/ ./server/
 
 # HF Spaces expects port 7860
 ENV PORT=7860
