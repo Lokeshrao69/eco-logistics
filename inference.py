@@ -55,7 +55,7 @@ FALLBACK_ACTION = {
 }
 
 # Task IDs to run (all three)
-TASK_IDS = ["restock_only", "inventory_balanced", "net_zero_profit"]
+TASK_IDS = ["restock_only", "inventory_balanced", "net_zero_profit", "demand_surge"]
 
 # Valid values for sanitization
 VALID_CITIES = ["Seattle", "Chicago", "NYC"]
