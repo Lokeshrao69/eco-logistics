@@ -342,7 +342,3 @@ The environment is deployed at: https://huggingface.co/spaces/lokeshrao226/eco-l
 | `GET /docs` | Interactive Swagger documentation |
 
 ---
-
-## License
-
-MIT
