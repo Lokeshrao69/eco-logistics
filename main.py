@@ -1,16 +1,25 @@
 """
-Eco-Logistics — FastAPI OpenEnv Server
+Eco-Logistics — FastAPI OpenEnv Server (v2 — parallel-rollout safe)
 
-Endpoints: /step, /reset, /state, /tasks, /grader, /baseline
+Key change from v1: instead of ONE global env, we maintain a session-id-keyed
+pool. Each parallel rollout passes its own session_id header and gets its own
+env instance. This is required for GRPO training where 16+ rollouts run at once.
+
+Sessions fall back to a default "main" session when no header is provided, so
+the existing single-session clients (Swagger, inference.py) keep working.
+
+Endpoints: /step, /reset, /state, /tasks, /grader, /baseline, /health
 Runs on port 7860 for Hugging Face Spaces.
 """
 
 from __future__ import annotations
 
 import os
+import threading
+import time
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -26,8 +35,8 @@ from models import (
 
 app = FastAPI(
     title="Eco-Logistics: Multi-City Supply Chain Optimizer",
-    version="1.0.0",
-    description="OpenEnv-compliant RL environment for supply chain optimization with carbon tracking.",
+    version="2.0.0",
+    description="OpenEnv-compliant RL environment with session-based parallel rollout support.",
 )
 
 app.add_middleware(
@@ -38,8 +47,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global environment instance (single-session for simplicity; extend with session IDs for multi-user)
-env = EcoLogisticsEnv()
+
+# ── Session-based env pool ───────────────────────────────────────────────────
+
+MAX_SESSIONS = 32                 # hard cap — blocks rollouts past this
+SESSION_TTL_SECONDS = 600         # evict idle envs after 10 min
+
+_sessions: Dict[str, EcoLogisticsEnv] = {}
+_last_touch: Dict[str, float] = {}
+_pool_lock = threading.Lock()
+
+
+def _gc_sessions() -> None:
+    """Evict idle sessions. Called opportunistically on every request."""
+    now = time.time()
+    stale = [sid for sid, t in _last_touch.items() if now - t > SESSION_TTL_SECONDS]
+    for sid in stale:
+        _sessions.pop(sid, None)
+        _last_touch.pop(sid, None)
+
+
+def get_env(session_id: str) -> EcoLogisticsEnv:
+    """Return the env for this session, creating it on first use.
+
+    Thread-safe: protected by _pool_lock. FastAPI's default sync handlers run
+    in a threadpool, so we need this guard.
+    """
+    with _pool_lock:
+        _gc_sessions()
+        if session_id not in _sessions:
+            if len(_sessions) >= MAX_SESSIONS:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Too many concurrent sessions (max {MAX_SESSIONS}). "
+                           f"Increase MAX_SESSIONS in main.py or wait for idle sessions to evict.",
+                )
+            _sessions[session_id] = EcoLogisticsEnv()
+        _last_touch[session_id] = time.time()
+        return _sessions[session_id]
 
 
 # ── Request / Response Models ────────────────────────────────────────────────
@@ -91,17 +136,17 @@ class BaselineResponse(BaseModel):
 def root():
     return {
         "name": "Eco-Logistics: Multi-City Supply Chain Optimizer",
-        "version": "1.0.0",
-        "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader", "/baseline"],
+        "version": "2.0.0",
+        "endpoints": ["/reset", "/step", "/state", "/tasks", "/grader", "/baseline", "/health", "/sessions"],
+        "parallel_rollouts": f"supported (max {MAX_SESSIONS} concurrent sessions)",
     }
 
 
 @app.post("/reset", response_model=Observation)
-def reset(req: Optional[ResetRequest] = None):
-    """Reset the environment to a specific task."""
-    if req is None:
-        req = ResetRequest()
+def reset(req: ResetRequest, x_session_id: str = Header(default="main")):
+    """Reset the environment. Pass X-Session-Id header for parallel rollouts."""
     try:
+        env = get_env(x_session_id)
         obs = env.reset(task_id=req.task_id, seed=req.seed)
         return obs
     except ValueError as e:
@@ -109,10 +154,8 @@ def reset(req: Optional[ResetRequest] = None):
 
 
 @app.post("/step", response_model=StepResponse)
-def step(req: Optional[StepRequest] = None):
-    """Execute one step in the environment."""
-    if req is None:
-        req = StepRequest()
+def step(req: StepRequest, x_session_id: str = Header(default="main")):
+    """Execute one step. Pass X-Session-Id header for parallel rollouts."""
     try:
         mode = SpeedMode(req.speed_mode)
     except ValueError:
@@ -125,15 +168,17 @@ def step(req: Optional[StepRequest] = None):
         speed_mode=mode,
     )
     try:
-        obs, reward, done, info = env.step(action)
-        return StepResponse(observation=obs, reward=reward, done=done, info=info)
+        env = get_env(x_session_id)
+        obs, reward, done = env.step(action)
+        return StepResponse(observation=obs, reward=reward, done=done)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/state")
-def state():
-    """Return full environment state snapshot."""
+def state(x_session_id: str = Header(default="main")):
+    """Return full environment state snapshot for this session."""
+    env = get_env(x_session_id)
     return env.state()
 
 
@@ -144,11 +189,10 @@ def tasks():
 
 
 @app.post("/grader", response_model=GraderResult)
-def grader(req: Optional[GradeRequest] = None):
-    """Grade the current episode."""
-    if req is None:
-        req = GradeRequest()
+def grader(req: GradeRequest, x_session_id: str = Header(default="main")):
+    """Grade the current episode for this session."""
     try:
+        env = get_env(x_session_id)
         return env.grade(req.task_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -156,15 +200,30 @@ def grader(req: Optional[GradeRequest] = None):
 
 @app.post("/baseline", response_model=BaselineResponse)
 def baseline(req: BaselineRequest):
-    """Run a deterministic heuristic baseline and return results."""
+    """Run a deterministic heuristic baseline and return results.
+    Note: baseline uses its own ephemeral env, not the session pool.
+    """
     from baseline import run_heuristic_baseline
     result = run_heuristic_baseline(task_id=req.task_id, seed=req.seed)
     return result
 
 
+@app.get("/sessions")
+def sessions():
+    """Diagnostic endpoint — shows active session count and IDs."""
+    with _pool_lock:
+        _gc_sessions()
+        return {
+            "active": len(_sessions),
+            "max": MAX_SESSIONS,
+            "session_ids": list(_sessions.keys()),
+            "idle_ttl_seconds": SESSION_TTL_SECONDS,
+        }
+
+
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "active_sessions": len(_sessions)}
 
 
 # ── Startup ──────────────────────────────────────────────────────────────────
