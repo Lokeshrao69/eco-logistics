@@ -9,7 +9,7 @@ tags:
   - openenv
 ---
 
-# 🌍 Eco-Logistics: Multi-City Supply Chain Optimizer
+# Eco-Logistics: Multi-City Supply Chain Optimizer
 
 > An OpenEnv-compatible reinforcement learning environment where an AI agent manages inventory across 3 warehouses to meet fluctuating demand while minimizing carbon footprint and shipping costs.
 
