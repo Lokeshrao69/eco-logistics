@@ -1,0 +1,6 @@
+training/
+*.ipynb
+venv/
+__pycache__/
+*.pyc
+.git/
