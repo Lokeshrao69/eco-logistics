@@ -169,8 +169,8 @@ def step(req: StepRequest, x_session_id: str = Header(default="main")):
     )
     try:
         env = get_env(x_session_id)
-        obs, reward, done = env.step(action)
-        return StepResponse(observation=obs, reward=reward, done=done)
+        obs, reward, done, info = env.step(action)
+        return StepResponse(observation=obs, reward=reward, done=done, info=info)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
