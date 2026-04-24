@@ -50,7 +50,7 @@ app.add_middleware(
 
 # ── Session-based env pool ───────────────────────────────────────────────────
 
-MAX_SESSIONS = 32                 # hard cap — blocks rollouts past this
+MAX_SESSIONS = 64                # hard cap — blocks rollouts past this
 SESSION_TTL_SECONDS = 600         # evict idle envs after 10 min
 
 _sessions: Dict[str, EcoLogisticsEnv] = {}
@@ -218,6 +218,23 @@ def sessions():
             "max": MAX_SESSIONS,
             "session_ids": list(_sessions.keys()),
             "idle_ttl_seconds": SESSION_TTL_SECONDS,
+        }
+    
+@app.post("/reset_all")
+def reset_all():
+    """Admin endpoint — wipe the entire session pool.
+ 
+    Useful when a training run gets stuck or leaves stale sessions around.
+    Much faster than a full Space restart.
+    """
+    with _pool_lock:
+        count = len(_sessions)
+        _sessions.clear()
+        _last_touch.clear()
+        return {
+            "cleared": count,
+            "active_after": len(_sessions),
+            "message": f"Pool cleared. {count} sessions evicted.",
         }
 
 
