@@ -8,10 +8,17 @@ An RL environment that puts a language model in charge of a three-warehouse supp
 
 **Headline result (held-out `net_zero_profit` task, 3-run averaged):**
 > GRPO Qwen-2.5-1.5B achieves a **25.6× improvement in profit-per-carbon ratio** over base Qwen, with a **grader score of 0.273 ± 0.019** (vs base 0.259).
+![Training dynamics + inventory_balanced eval — shows the run-1 reward-hacking collapse and run-2 recovery](training_curves_IB.png)
 
-![Profit/carbon ratio improvement (log scale)](chart_profit_carbon_ratio.png)
+*Top row: GRPO training curves with the format-hacking collapse highlighted. Bottom row: 4-way comparison on the `inventory_balanced` task.*
 
-![Held-out grader scores across 4 policies](chart_grader_comparison.png)
+For the headline `net_zero_profit` cross-task evaluation (25.6× profit/carbon, grader 0.273 ± 0.019), see the charts below:
+
+![Profit/carbon ratio improvement — net_zero_profit, log scale](chart_profit_carbon_ratio.png)
+
+![Held-out grader scores across 4 policies — net_zero_profit, 3-run averaged](chart_grader_comparison.png)
+
+---
 
 ---
 ---
