@@ -10,42 +10,6 @@ import math
 import random
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
-# Add this class at the top of env.py (below imports)
-class Disruptor:
-    def __init__(self, rng):
-        self.rng = rng
-
-    def get_attack(self, current_inventory, history):
-        attack_type = self.rng.choice(["A1", "A2", "A3", "A4"])
-        alert = ""
-        modifications = {}
-
-        if attack_type == "A1": # Demand Collapse
-            city = self.rng.choice(CITIES)
-            alert = f"DISRUPTION: Demand collapse in {city}. Expected sales: 30%."
-            modifications = {"type": "demand_drop", "city": city, "factor": 0.3}
-        
-        elif attack_type == "A2": # Phantom Shipment
-            city = self.rng.choice(CITIES)
-            alert = f"DISRUPTION: Incoming phantom shipment detected for {city} (15 units)."
-            # Logic handled in step() observation
-        
-        elif attack_type == "A3": # Coordinated Weather
-            # Targets the most active city in history
-            active_city = max(current_inventory, key=current_inventory.get)
-            alert = f"DISRUPTION: Severe logistics storm on routes from {active_city}. Costs 5x."
-            modifications = {"type": "cost_spike", "origin": active_city, "factor": 5.0}
-
-        elif attack_type == "A4": # Inventory Freeze
-            city = self.rng.choice(CITIES)
-            alert = f"DISRUPTION: Labor strike in {city}. Inventory frozen."
-            modifications = {"type": "freeze", "city": city}
-
-        return alert, modifications
-
-# Inside EcoLogisticsEnv.step():
-# 1. Update the state based on modifications before reward calculation
-# 2. Append the Disruptor alert to the Observation.weather_alert
 
 from models import (
     CITIES,
@@ -84,7 +48,8 @@ class EcoLogisticsEnv:
         self._carbon_budget: float = 0.0
         self._history: List[Dict[str, Any]] = []
         self._done: bool = False
-        self._disruptor_modifications: Dict[str, Any] = {}
+        self._last_demand: Dict[str, float] = {}
+        self._last_fulfilled: Dict[str, float] = {}
 
     # ── Reset ────────────────────────────────────────────────────────────
 
@@ -103,41 +68,14 @@ class EcoLogisticsEnv:
         self._carbon_budget = self._task.carbon_budget
         self._history = []
         self._done = False
-        self._last_demand: Dict[str, float] = {}
-        self._last_fulfilled: Dict[str, float] = {}
+        self._last_demand = {}
+        self._last_fulfilled = {}
 
         return self._make_observation()
 
     # ── Step ─────────────────────────────────────────────────────────────
 
     def step(self, action: Action) -> Tuple[Observation, Reward, bool, Dict[str, Any]]:
-        # --- 🚨 HACKATHON DISRUPTOR LOGIC START 🚨 ---
-        # 1. Generate Disruption
-        attack_type = self._rng.choice(["NONE", "A1", "A2", "A3", "A4"], p=[0.4, 0.15, 0.15, 0.15, 0.15])
-        self._disruptor_modifications = {}
-        disruption_alert = ""
-
-        if attack_type == "A1":
-            city = self._rng.choice(CITIES)
-            disruption_alert = f"DISRUPTION: Demand collapse in {city}. Sales capped at 30%."
-            self._disruptor_modifications = {"type": "demand_drop", "city": city, "factor": 0.3}
-        elif attack_type == "A2":
-            city = self._rng.choice(CITIES)
-            disruption_alert = f"DISRUPTION: Phantom shipment for {city} (15 units) arriving next step."
-            # We don't modify actual state here, the agent just gets tricked by the text
-        elif attack_type == "A3":
-            city = self._rng.choice(CITIES)
-            disruption_alert = f"DISRUPTION: Logistics storm in {city}. Shipping costs 5x."
-            self._disruptor_modifications = {"type": "cost_spike", "city": city, "factor": 5.0}
-        elif attack_type == "A4":
-            city = self._rng.choice(CITIES)
-            disruption_alert = f"DISRUPTION: IT Outage in {city}. No outbound shipping allowed."
-            self._disruptor_modifications = {"type": "freeze", "city": city}
-            
-        # Append the alert to the existing weather string
-        current_weather_str = self._weather.alert if hasattr(self._weather, 'alert') else ""
-        combined_alert = (current_weather_str + " | " + disruption_alert).strip(" |")
-        # --- 🚨 HACKATHON DISRUPTOR LOGIC END 🚨 ---
         if self._task is None:
             raise RuntimeError("Call reset() before step()")
         if self._done:
@@ -356,7 +294,7 @@ class EcoLogisticsEnv:
             carbon_credit_balance=round(self._carbon_budget - self._cumulative_carbon, 1),
             step_number=self._step_num,
             total_steps=self._task.total_steps,
-            eather_alert=(alert + " | " + disruption_alert).strip(" |"),
+            weather_alert=alert,
             cumulative_profit=round(self._cumulative_profit, 2),
             cumulative_carbon=round(self._cumulative_carbon, 2),
         )
@@ -394,8 +332,6 @@ class EcoLogisticsEnv:
             return self._grade_balanced()
         elif tid == "net_zero_profit":
             return self._grade_net_zero()
-        elif tid == "demand_surge":
-            return self._grade_demand_surge()
         else:
             raise ValueError(f"Unknown task: {tid}")
 
@@ -428,7 +364,7 @@ class EcoLogisticsEnv:
 
     def _grade_balanced(self) -> GraderResult:
         """Medium: Inventory levels within 10% of each other across cities.
-        
+
         Scoring uses two components:
         - 60% weight: fraction of steps perfectly balanced (within 10%)
         - 40% weight: average closeness-to-balance across ALL steps (smooth gradient)
@@ -499,42 +435,6 @@ class EcoLogisticsEnv:
                 "profit": round(profit, 2),
                 "carbon_used": round(self._cumulative_carbon, 2),
                 "carbon_budget": self._carbon_budget,
-                "carbon_ok": float(carbon_ok),
-            },
-        )
-
-    def _grade_demand_surge(self) -> GraderResult:
-        """Hard: Fulfill ≥85% of total demand during a NYC demand surge, under carbon budget."""
-        if not self._history:
-            return GraderResult(task_id="demand_surge", score=0.001, feedback="No steps taken.")
-
-        total_demand = 0.0
-        total_fulfilled = 0.0
-
-        for h in self._history:
-            for city in CITIES:
-                d = h.get("demand", {}).get(city, 0.0)
-                f = h.get("fulfilled", {}).get(city, 0.0)
-                total_demand += d
-                total_fulfilled += f
-
-        fill_rate = total_fulfilled / total_demand if total_demand > 0 else 0.0
-        carbon_ok = self._cumulative_carbon <= self._carbon_budget
-
-        # Score: fulfillment rate is primary (70%), carbon compliance is secondary (30%)
-        fill_score = fill_rate  # 0.0 to 1.0
-        carbon_score = 1.0 if carbon_ok else max(0.0, 1.0 - (self._cumulative_carbon - self._carbon_budget) / self._carbon_budget)
-
-        score = round(0.7 * fill_score + 0.3 * carbon_score, 4)
-        return GraderResult(
-            task_id="demand_surge",
-            score=self._clamp_score(score),
-            feedback=f"Fill rate: {fill_rate:.1%} (target ≥85%) | Carbon: {self._cumulative_carbon:.1f}/{self._carbon_budget} | {'OK' if carbon_ok else 'OVER'}",
-            metrics={
-                "total_demand": round(total_demand, 2),
-                "total_fulfilled": round(total_fulfilled, 2),
-                "fill_rate": round(fill_rate, 4),
-                "carbon_used": round(self._cumulative_carbon, 2),
                 "carbon_ok": float(carbon_ok),
             },
         )
