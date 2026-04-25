@@ -52,7 +52,7 @@ A 3-warehouse OpenEnv-compliant simulator with the standard `reset` / `step` / `
 
 ## Results
 
-![Training curves + 4-way comparison on held-out seeds](training_curves_inventory_balanced.png)
+![Training curves + 4-way comparison on held-out seeds](training_curves_IB.png)
 
 **4-way comparison on held-out seeds 500–509 (10 episodes each):**
 
@@ -123,7 +123,7 @@ eco-logistics/
 
 ##  Team
 
-{FILL_IN_AT_SUBMIT}
+Crystal Blue
 
 ## Acknowledgments
 
