@@ -56,6 +56,11 @@ A 3-warehouse OpenEnv-compliant simulator with the standard `reset` / `step` / `
 We evaluated the same trained model on two tasks: `inventory_balanced` (the training-distribution task) and `net_zero_profit` (a harder, never-trained-on task that tests cross-task generalization).
 
 ![Training curves + 4-way comparison on held-out seeds](training_curves_IB.png)
+### Visual comparison
+
+![Held-out grader scores across 4 policies](chart_grader_comparison.png)
+
+![Profit/carbon ratio improvement](chart_profit_carbon_ratio.png)
 
 ### Task 1 — `inventory_balanced` (training-distribution, single 10-episode run)
 
