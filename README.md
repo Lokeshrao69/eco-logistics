@@ -74,8 +74,8 @@ A 3-warehouse OpenEnv-compliant simulator with the standard `reset` / `step` / `
 ## Qualitative evidence
 
 Median-episode action trajectories before vs after training:
-- [Before training](trajectory_before_inventory_balanced.txt)
-- [After training](trajectory_after_inventory_balanced.txt)
+- [Before training](before_training.png)
+- [After training](after_training.png)
 
 The trained agent reserves `Air` mode for specific demand-spike steps and uses `Rail` for routine restocking. This behavior emerges purely from the reward signal.
 
