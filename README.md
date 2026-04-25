@@ -1,4 +1,13 @@
 # Eco-Logistics: Multi-City Supply Chain Optimizer
+---
+title: Eco-Logistics
+emoji: 📦
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_file: main.py
+pinned: false
+---
 
 > **OpenEnv Hackathon — Round 2 Submission**
 > Theme: **World Modeling — Professional Tasks**
@@ -75,7 +84,7 @@ A 3-warehouse OpenEnv-compliant simulator with the standard `reset` / `step` / `
 
 Median-episode action trajectories before vs after training:
 - [Before training](before_training.png)
-- [After training](after_training.png)
+- [After training](trajectory_after_inventory_balanced)
 
 The trained agent reserves `Air` mode for specific demand-spike steps and uses `Rail` for routine restocking. This behavior emerges purely from the reward signal.
 
