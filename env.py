@@ -10,6 +10,42 @@ import math
 import random
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
+# Add this class at the top of env.py (below imports)
+class Disruptor:
+    def __init__(self, rng):
+        self.rng = rng
+
+    def get_attack(self, current_inventory, history):
+        attack_type = self.rng.choice(["A1", "A2", "A3", "A4"])
+        alert = ""
+        modifications = {}
+
+        if attack_type == "A1": # Demand Collapse
+            city = self.rng.choice(CITIES)
+            alert = f"DISRUPTION: Demand collapse in {city}. Expected sales: 30%."
+            modifications = {"type": "demand_drop", "city": city, "factor": 0.3}
+        
+        elif attack_type == "A2": # Phantom Shipment
+            city = self.rng.choice(CITIES)
+            alert = f"DISRUPTION: Incoming phantom shipment detected for {city} (15 units)."
+            # Logic handled in step() observation
+        
+        elif attack_type == "A3": # Coordinated Weather
+            # Targets the most active city in history
+            active_city = max(current_inventory, key=current_inventory.get)
+            alert = f"DISRUPTION: Severe logistics storm on routes from {active_city}. Costs 5x."
+            modifications = {"type": "cost_spike", "origin": active_city, "factor": 5.0}
+
+        elif attack_type == "A4": # Inventory Freeze
+            city = self.rng.choice(CITIES)
+            alert = f"DISRUPTION: Labor strike in {city}. Inventory frozen."
+            modifications = {"type": "freeze", "city": city}
+
+        return alert, modifications
+
+# Inside EcoLogisticsEnv.step():
+# 1. Update the state based on modifications before reward calculation
+# 2. Append the Disruptor alert to the Observation.weather_alert
 
 from models import (
     CITIES,
