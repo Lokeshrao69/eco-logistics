@@ -19,7 +19,7 @@ An RL environment that puts a language model in charge of a three-warehouse supp
 | Training notebook (Colab) | https://colab.research.google.com/github/Lokeshrao69/eco-logistics/blob/main/train_eco_logistics_grpo.ipynb |
 | Code repository (this repo) | https://github.com/Lokeshrao69/eco-logistics |
 | Trained LoRA adapter | https://huggingface.co/lokeshrao226/eco-logistics-qwen-grpo |
-| Writeup (HF Discussion) | _link to your HF Discussion blog post_ |
+| Writeup (HF Discussion) | https://huggingface.co/lokeshrao226/eco-logistics-qwen-grpo/discussions/1|
 
 ---
 
