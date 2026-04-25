@@ -7,8 +7,13 @@
 An RL environment that puts a language model in charge of a three-warehouse supply chain (Seattle · Chicago · NYC) and post-trains it with **GRPO** to navigate the profit-vs-carbon tradeoff under non-stationary shocks.
 
 **Headline result (held-out `net_zero_profit` task, 3-run averaged):**
-> GRPO Qwen-2.5-1.5B achieves a **25.6× improvement in profit-per-carbon ratio** over base Qwen, with a **grader score of 0.273 ± 0.019** (vs base 0.259). The trained policy generalizes from the medium training task to the harder evaluation task with stable variance.
+> GRPO Qwen-2.5-1.5B achieves a **25.6× improvement in profit-per-carbon ratio** over base Qwen, with a **grader score of 0.273 ± 0.019** (vs base 0.259).
 
+![Profit/carbon ratio improvement (log scale)](chart_profit_carbon_ratio.png)
+
+![Held-out grader scores across 4 policies](chart_grader_comparison.png)
+
+---
 ---
 
 ##  Deliverables
