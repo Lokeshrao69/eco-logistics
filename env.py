@@ -84,6 +84,7 @@ class EcoLogisticsEnv:
         self._carbon_budget: float = 0.0
         self._history: List[Dict[str, Any]] = []
         self._done: bool = False
+        self._disruptor_modifications: Dict[str, Any] = {}
 
     # ── Reset ────────────────────────────────────────────────────────────
 
@@ -110,6 +111,33 @@ class EcoLogisticsEnv:
     # ── Step ─────────────────────────────────────────────────────────────
 
     def step(self, action: Action) -> Tuple[Observation, Reward, bool, Dict[str, Any]]:
+        # --- 🚨 HACKATHON DISRUPTOR LOGIC START 🚨 ---
+        # 1. Generate Disruption
+        attack_type = self._rng.choice(["NONE", "A1", "A2", "A3", "A4"], p=[0.4, 0.15, 0.15, 0.15, 0.15])
+        self._disruptor_modifications = {}
+        disruption_alert = ""
+
+        if attack_type == "A1":
+            city = self._rng.choice(CITIES)
+            disruption_alert = f"DISRUPTION: Demand collapse in {city}. Sales capped at 30%."
+            self._disruptor_modifications = {"type": "demand_drop", "city": city, "factor": 0.3}
+        elif attack_type == "A2":
+            city = self._rng.choice(CITIES)
+            disruption_alert = f"DISRUPTION: Phantom shipment for {city} (15 units) arriving next step."
+            # We don't modify actual state here, the agent just gets tricked by the text
+        elif attack_type == "A3":
+            city = self._rng.choice(CITIES)
+            disruption_alert = f"DISRUPTION: Logistics storm in {city}. Shipping costs 5x."
+            self._disruptor_modifications = {"type": "cost_spike", "city": city, "factor": 5.0}
+        elif attack_type == "A4":
+            city = self._rng.choice(CITIES)
+            disruption_alert = f"DISRUPTION: IT Outage in {city}. No outbound shipping allowed."
+            self._disruptor_modifications = {"type": "freeze", "city": city}
+            
+        # Append the alert to the existing weather string
+        current_weather_str = self._weather.alert if hasattr(self._weather, 'alert') else ""
+        combined_alert = (current_weather_str + " | " + disruption_alert).strip(" |")
+        # --- 🚨 HACKATHON DISRUPTOR LOGIC END 🚨 ---
         if self._task is None:
             raise RuntimeError("Call reset() before step()")
         if self._done:
@@ -328,7 +356,7 @@ class EcoLogisticsEnv:
             carbon_credit_balance=round(self._carbon_budget - self._cumulative_carbon, 1),
             step_number=self._step_num,
             total_steps=self._task.total_steps,
-            weather_alert=alert,
+            eather_alert=(alert + " | " + disruption_alert).strip(" |"),
             cumulative_profit=round(self._cumulative_profit, 2),
             cumulative_carbon=round(self._cumulative_carbon, 2),
         )
