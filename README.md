@@ -1,3 +1,18 @@
+---
+title: Eco-Logistics Multi-City Supply Chain Optimizer
+emoji: 📦
+colorFrom: green
+colorTo: blue
+sdk: docker
+pinned: false
+license: apache-2.0
+tags:
+  - openenv
+  - reinforcement-learning
+  - supply-chain
+  - grpo
+short_description: 3-warehouse RL env for GRPO-trained Qwen 1.5B carbon-aware logistics
+---
 # Eco-Logistics: Multi-City Supply Chain Optimizer
 
 > **OpenEnv Hackathon — Round 2 Submission**
