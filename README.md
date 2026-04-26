@@ -406,6 +406,15 @@ We had reward-hacked ourselves.
 Fix: bumped format penalty from `-5.0` to `-1000.0`. Format hacking became unprofitable, model returned to emitting valid JSON, training stabilized. Lesson: **format penalties must strictly dominate any reward the fallback action could earn.**
 
 ---
+## v8 historical evidence (prior submission)
+
+For context on what v8 achieved before the v9 rebuild:
+
+![v8 4-panel summary](training_curves_IB.png)
+
+This was our original v8 report at submission time — different held-out seeds
+(500-509), different task focus (inventory_balanced), 60% format compliance.
+v9 supersedes this; we include it for reproducibility of the v8 vs v9 comparison.
 
 ## Honest Limitations
 
