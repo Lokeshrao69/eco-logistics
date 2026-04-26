@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,11 +26,20 @@ from pydantic import BaseModel
 from env import EcoLogisticsEnv
 from models import (
     TASKS,
+    TASKS_V2,
     Action,
+    AgentPlan,
+    AgentRole,
+    CurriculumState,
     GraderResult,
+    MultiAgentObservation,
+    NegotiationStatus,
     Observation,
+    PlanStep,
     Reward,
     SpeedMode,
+    V2StepRequest,
+    V2StepResponse,
 )
 
 app = FastAPI(
@@ -236,6 +245,185 @@ def reset_all():
             "active_after": len(_sessions),
             "message": f"Pool cleared. {count} sessions evicted.",
         }
+
+
+# ── v2 ENDPOINTS (curriculum + replanning + multi-agent) ────────────────────
+# These add new functionality WITHOUT touching v1 endpoints. The v8 LoRA's
+# rollout loop (which calls /reset and /step) keeps working unchanged.
+
+class V2ResetRequest(BaseModel):
+    task_id: str = "restock_only"
+    seed: Optional[int] = 42
+    use_v2: bool = True   # default to True for v2-flavored endpoints
+
+
+class V2ResetCurriculumRequest(BaseModel):
+    seed: Optional[int] = 42
+
+
+class V2SubmitPlanRequest(BaseModel):
+    plan: AgentPlan
+
+
+class V2SubmitMultiagentPlansRequest(BaseModel):
+    plans: Dict[str, AgentPlan]
+
+
+class V2RunChunkResponse(BaseModel):
+    observation: Optional[Observation] = None
+    rewards: List[Reward] = []
+    done: bool = False
+    info: Dict[str, Any] = {}
+
+
+class V2RunMultiagentChunkResponse(BaseModel):
+    observations: Dict[str, MultiAgentObservation] = {}
+    rewards: List[Reward] = []
+    done: bool = False
+    info: Dict[str, Any] = {}
+
+
+@app.post("/reset_v2", response_model=Observation)
+def reset_v2(req: V2ResetRequest, x_session_id: str = Header(default="main")):
+    """v2 reset. Set use_v2=True for 25-step variants from TASKS_V2."""
+    try:
+        env = get_env(x_session_id)
+        return env.reset(task_id=req.task_id, seed=req.seed, use_v2=req.use_v2)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/reset_curriculum", response_model=Observation)
+def reset_curriculum(req: V2ResetCurriculumRequest, x_session_id: str = Header(default="main")):
+    """Reset to whatever level the curriculum is currently at (uses TASKS_V2)."""
+    env = get_env(x_session_id)
+    return env.reset_to_curriculum_level(seed=req.seed)
+
+
+@app.get("/curriculum_state")
+def curriculum_state(x_session_id: str = Header(default="main")):
+    """Inspect the current curriculum state for this session."""
+    env = get_env(x_session_id)
+    cs = env.get_curriculum_state()
+    return {
+        "current_level": cs.current_level,
+        "current_task_id": cs.current_task_id(),
+        "episodes_at_level": cs.episodes_at_level,
+        "success_rate": round(cs.success_rate(), 3),
+        "recent_outcomes": cs.recent_outcomes,
+    }
+
+
+@app.post("/force_curriculum_level")
+def force_curriculum_level(level: int, x_session_id: str = Header(default="main")):
+    """Manually set the curriculum level (0/1/2). For evaluation runs."""
+    env = get_env(x_session_id)
+    try:
+        env.force_curriculum_level(level)
+        return {"ok": True, "level": level}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/submit_plan")
+def submit_plan(req: V2SubmitPlanRequest, x_session_id: str = Header(default="main")):
+    """Agent submits an upfront 10/25-step plan."""
+    env = get_env(x_session_id)
+    try:
+        env.submit_plan(req.plan)
+        return {"ok": True, "plan_length": len(req.plan.steps)}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/submit_revised_plan")
+def submit_revised_plan(req: V2SubmitPlanRequest, x_session_id: str = Header(default="main")):
+    """Agent submits a revised plan (mid-episode replan)."""
+    env = get_env(x_session_id)
+    try:
+        env.submit_revised_plan(req.plan)
+        return {"ok": True, "revisions_so_far": env._plan_revisions_count}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/run_chunk", response_model=V2RunChunkResponse)
+def run_chunk(
+    chunk_size: Optional[int] = None,
+    x_session_id: str = Header(default="main"),
+):
+    """Run the next chunk of plan steps. Default = REPLAN_INTERVAL_STEPS = 4."""
+    env = get_env(x_session_id)
+    try:
+        obs, rewards, done, info = env.run_plan_chunk(max_chunk_steps=chunk_size)
+        return V2RunChunkResponse(
+            observation=obs,
+            rewards=rewards,
+            done=done,
+            info=info,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/replanning_state")
+def replanning_state(x_session_id: str = Header(default="main")):
+    """Inspect the current single-agent replanning state."""
+    env = get_env(x_session_id)
+    return env.get_replanning_state()
+
+
+@app.post("/submit_multiagent_plans")
+def submit_multiagent_plans(
+    req: V2SubmitMultiagentPlansRequest,
+    x_session_id: str = Header(default="main"),
+):
+    """Submit one plan per role. Triggers immediate negotiation resolution."""
+    env = get_env(x_session_id)
+    try:
+        env.submit_multiagent_plans(req.plans)
+        return {
+            "ok": True,
+            "active_roles": list(req.plans.keys()),
+            "negotiation_status": {
+                r: s.value for r, s in env._role_negotiation_status.items()
+            },
+            "cumulative_negotiation_bonus": round(env._cumulative_negotiation_bonus, 2),
+        }
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/run_multiagent_chunk", response_model=V2RunMultiagentChunkResponse)
+def run_multiagent_chunk(
+    chunk_size: Optional[int] = None,
+    x_session_id: str = Header(default="main"),
+):
+    """Run one chunk of multi-agent steps."""
+    env = get_env(x_session_id)
+    try:
+        obs_per_role, rewards, done, info = env.run_multiagent_chunk(max_chunk_steps=chunk_size)
+        return V2RunMultiagentChunkResponse(
+            observations=obs_per_role,
+            rewards=rewards,
+            done=done,
+            info=info,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/multiagent_state")
+def multiagent_state(x_session_id: str = Header(default="main")):
+    """Inspect multi-agent state for this session."""
+    env = get_env(x_session_id)
+    return env.get_multiagent_state()
+
+
+@app.get("/tasks_v2")
+def tasks_v2():
+    """List the v2 (25-step) task variants."""
+    return {tid: t.model_dump() for tid, t in TASKS_V2.items()}
 
 
 @app.get("/health")
