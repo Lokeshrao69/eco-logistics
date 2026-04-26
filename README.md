@@ -11,7 +11,7 @@ tags:
   - reinforcement-learning
   - supply-chain
   - grpo
-short_description: 3-warehouse RL env for GRPO-trained Qwen 1.5B carbon-aware logistics
+short_description:  GRPO-trained LLM for carbon-aware supply chain
 ---
 # Eco-Logistics: Multi-City Supply Chain Optimizer
 
