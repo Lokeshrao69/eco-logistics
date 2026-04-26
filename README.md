@@ -47,7 +47,7 @@ An RL environment that puts a language model in charge of a three-warehouse supp
 | **Submitted LoRA (v9)** | https://huggingface.co/lokeshrao226/eco-logistics-qwen-grpo-v2 |
 | Prior LoRA (v8 baseline) | https://huggingface.co/lokeshrao226/eco-logistics-qwen-grpo |
 | Training notebook (Colab) | https://colab.research.google.com/github/Lokeshrao69/eco-logistics/blob/main/train_eco_logistics_grpo_v9_FINAL_v2.ipynb |
-| HF Discussion blog | _to be set at submit time_ |
+| HF Discussion blog | https://huggingface.co/spaces/lokeshrao226/eco-logistics/discussions/1 |
 
 ---
 
